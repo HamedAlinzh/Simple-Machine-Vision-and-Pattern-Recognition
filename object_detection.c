@@ -94,9 +94,9 @@ void convolution_pure_c(float* input, float* output, int width, int height, floa
 }
 
 // =============================================================
-// بخش ۴: تابع شناسایی مکان شیء (Max Location)
+// بخش ۴: تابع شناسایی مکان شیء و ذخیره در فایل
 // =============================================================
-void find_object_location(float* image_data, int width, int height, int img_id) {
+void find_object_location(float* image_data, int width, int height, int img_id, FILE* fp) {
     float max_val = -1.0f;
     int best_x = 0, best_y = 0;
 
@@ -109,51 +109,58 @@ void find_object_location(float* image_data, int width, int height, int img_id) 
         }
     }
     
-    // چاپ کردن ۱۰ مورد اول برای نمونه
-    if (img_id < 10) {
-        printf("   Image %d -> Detected Object at (X: %d, Y: %d)\n", img_id, best_x, best_y);
+    // چاپ در ترمینال (فقط برای ۵ تای اول که شلوغ نشود)
+    if (img_id < 5) {
+        printf("   Image %d -> Detected at (X: %d, Y: %d)\n", img_id, best_x, best_y);
     }
+    
+    // ذخیره مختصات در فایل CSV برای پایتون
+    fprintf(fp, "%d,%d,%d\n", img_id, best_x, best_y);
 }
 
 // =============================================================
-// بخش ۵: بدنه اصلی (Main Loop)
+// بخش ۵: بدنه اصلی (Main Loop) - نسخه آماری
 // =============================================================
 int main() {
     int num_images = 100;
     char filename[100];
     
-    // کرنل تشخیص لبه (برای پیدا کردن مربع)
+    // آرایه‌هایی برای ذخیره زمان دقیق پردازش هر تصویر
+    double time_c_array[100];
+    double time_asm_array[100];
+    
     float kernel[9] = { 0, -1, 0, -1, 4, -1, 0, -1, 0 };
 
     printf("==========================================\n");
-    printf(" STARTING PATTERN RECOGNITION BENCHMARK \n");
+    printf(" STARTING STATISTICAL BENCHMARK \n");
     printf("==========================================\n");
 
     // --- تست ۱: اجرای کند با C خالص ---
     printf("\n1. Running Pure C Loop (Slow)...\n");
-    clock_t t1 = clock();
-    
     for (int i = 0; i < num_images; i++) {
         sprintf(filename, "dataset/img_%d.bmp", i);
         ColorImage* img = read_bmp_dataset(filename);
-        if (!img) { printf("Failed to read %s\n", filename); continue; }
+        if (!img) continue;
         
         ColorImage* out = create_image(img->width, img->height);
         
-        // فقط روی کانال قرمز اجرا می‌کنیم (چون تصویر سیاه و سفید است، کانال‌ها یکی هستند)
+        clock_t t_start = clock(); // شروع زمان‌گیری برای این عکس
         convolution_pure_c(img->r, out->r, img->width, img->height, kernel);
+        convolution_pure_c(img->g, out->g, img->width, img->height, kernel);
+        convolution_pure_c(img->b, out->b, img->width, img->height, kernel);
+        clock_t t_end = clock();   // پایان زمان‌گیری
+        
+        time_c_array[i] = ((double)(t_end - t_start)) / CLOCKS_PER_SEC;
         
         free_image(img);
         free_image(out);
     }
-    clock_t t2 = clock();
-    double time_c = ((double)(t2 - t1)) / CLOCKS_PER_SEC;
-    printf("   Done! Total Time (C): %.4f seconds\n", time_c);
-
+    printf("   Done!\n");
 
     // --- تست ۲: اجرای سریع با اسمبلی (SIMD) ---
     printf("\n2. Running Assembly SIMD Loop (Fast)...\n");
-    clock_t t3 = clock();
+    FILE* fp_coords = fopen("coords.csv", "w");
+    fprintf(fp_coords, "img_id,x,y\n"); 
     
     for (int i = 0; i < num_images; i++) {
         sprintf(filename, "dataset/img_%d.bmp", i);
@@ -162,30 +169,35 @@ int main() {
         
         ColorImage* out = create_image(img->width, img->height);
         
-        // اجرا روی ۳ کانال (برای فشار بیشتر روی پردازنده و نمایش قدرت اسمبلی)
+        clock_t t_start = clock(); // شروع زمان‌گیری اسمبلی
         apply_convolution_asm(img->r, out->r, img->width, img->height, kernel);
         apply_convolution_asm(img->g, out->g, img->width, img->height, kernel);
         apply_convolution_asm(img->b, out->b, img->width, img->height, kernel);
+        clock_t t_end = clock();   // پایان زمان‌گیری
         
-        // شناسایی مکان شیء (فقط یکبار در هر تصویر)
-        find_object_location(out->r, img->width, img->height, i);
+        time_asm_array[i] = ((double)(t_end - t_start)) / CLOCKS_PER_SEC;
+        
+        find_object_location(out->r, img->width, img->height, i, fp_coords);
 
         free_image(img);
         free_image(out);
     }
-    clock_t t4 = clock();
-    double time_asm = ((double)(t4 - t3)) / CLOCKS_PER_SEC;
+    fclose(fp_coords);
+    printf("   Done!\n");
+
+    // --- ذخیره زمان‌ها در فایل اکسل/CSV برای پایتون ---
+    FILE* fp_times = fopen("times.csv", "w");
+    fprintf(fp_times, "ImageID,Time_C,Time_ASM\n");
+    for(int i = 0; i < num_images; i++) {
+        fprintf(fp_times, "%d,%f,%f\n", i, time_c_array[i], time_asm_array[i]);
+    }
+    fclose(fp_times);
     
-    printf("\n==========================================\n");
-    printf(" FINAL RESULTS REPORT \n");
-    printf("==========================================\n");
-    printf("Number of Images: %d\n", num_images);
-    printf("Pure C Time:      %.4f sec\n", time_c);
-    printf("Assembly Time:    %.4f sec\n", time_asm);
+    printf("\nData saved to 'times.csv' and 'coords.csv'.\n");
+    printf("Calling Python for Statistical Analysis...\n");
     
-    double speedup = time_c / time_asm;
-    printf("SPEEDUP:          %.2fx Faster\n", speedup);
-    printf("==========================================\n");
+    // اجرای خودکار اسکریپت تحلیل آماری پایتون
+    system("python3 analyze_stats.py");
 
     return 0;
 }
