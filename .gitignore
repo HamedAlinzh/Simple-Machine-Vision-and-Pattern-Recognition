@@ -1,2 +1,3 @@
 venv/
-annotated_results/
+Object_Detection/annotated_results/
+Tumor_Detection/mri_dataset/
